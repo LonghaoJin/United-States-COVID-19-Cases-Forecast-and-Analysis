@@ -1,0 +1,427 @@
+---
+title: "final project"
+author: "Longhao Jin, Yongchang Su"
+date: "2020/5/2"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+  knitr::opts_chunk$set(include = TRUE)  # TRUE for solution; FALSE for questions set
+  knitr::opts_chunk$set(echo = TRUE)
+  knitr::opts_chunk$set(message = FALSE)
+  knitr::opts_chunk$set(warning = FALSE)
+  # knitr::opts_chunk$set(fig.height = 6, fig.width = 8, out.width = '50%', fig.align = "center")
+  options(width = 90)
+```
+
+```{css, echo=FALSE}
+.solution {
+background-color: #e6ffe6;
+}
+```
+
+To deal with moderate missing rate variables, HPSAShortage, HPSAServed and Underserved Pop, we use data imputation method. Noticing that these 3 variables miss together, multiple imputation is not good here. So we simply use all the rest variables related to medical aspect and perform a linear regression and use predictions to replace missing values of those variables.
+
+## Unsupervised Learning 
+
+### PCA to reduce dimension
+
+Before any clustering methods, we realize that the data containing demographic and health-related information can be severely correlated. Therefore, it will be reasonable to perform PCA to reduce the dimension of the data first.
+
+```{r, echo=FALSE}
+set.seed(123)
+dat = read.csv('county_data_apr22_r_s.csv', header = T)
+dat.dh = dat[1:3140,c(12:39, 49:51)]
+dat.dh = scale(dat.dh)
+pca = prcomp(dat.dh)
+pcadat = pca$x[,1:5]
+plot(pca, type = "l", pch = 19, main = "PCA Variance",ylim = c(0,24))
+var = pca$sdev^2
+text((1:10), var[1:10]+2, paste(round(100*cumsum(var[1:10])/sum(var),1), '%',sep = ''))
+```
+
+### Spectral Clustering
+
+We perform Spectral clustering on the data, and get the following results.
+
+```{r, echo=FALSE}
+W = as.matrix(exp(-(dist(pcadat))^2/2/var(dist(pcadat))))
+d = colSums(W)
+L = diag(d) - W
+f = eigen(L, symmetric = TRUE)
+par(mfrow = c(2,3))
+plot(rev(f$values)[1:10], pch = 19, ylab = "eigen-values", col = c(rep("red", 5), rep("blue", 196)))
+for(i in 1:4){
+  plot(f$vectors[, 3140-i], type = "l", ylab = "eigen-values")
+  a=f$vectors[, 3140-i]
+  text((1:3140)[abs(a)>max(abs(a))/1.5]+500,a[(1:3140)[abs(a)>max(abs(a))/1.5]], labels = dat$CountyName[(1:3140)[abs(a)>max(abs(a))/1.5]])
+}
+```
+
+```{r, echo=FALSE}
+par(mfrow = c(1,1))
+plot(pcadat[,1:2], xlab = 'Population PC', ylab = 'General health condition PC')
+md =loess(pcadat[,2]~pcadat[,1], span = 0.4)
+lines(pcadat[order(pcadat[,1]),1], md$fit[order(pcadat[,1])], col='red', lty=2)
+text(pcadat[c(5,7,12,61,76),1]-2, pcadat[c(5,7,12,61,76),2]+0.3, c('NY','Cook',' LA', 'Maricopa','Harris'))
+
+```
+
+### Hierarchical Clustering
+
+```{r, echo=FALSE}
+par(mfrow=c(2,2))
+hc = hclust(dist(pcadat), method = 'average')
+res = cutree(hc, k=4)
+plot(1:3140,res, col=res, xlab = 'County', ylab = 'Cluster', main = 'Method = Average')
+text(c(300, 1000, 500), 2:4, c('New York', 'Cook Maricopa Harris ', 'Los Angeles'))
+hc = hclust(dist(pcadat), method = 'complete')
+res = cutree(hc, k=4)
+plot(1:3140,res, col=res, xlab = 'County', ylab = 'Cluster', main = 'Method = Complete')
+text(c(300, 1000, 500), 2:4, c('New York', 'Cook Maricopa Harris ', 'Los Angeles'))
+hc = hclust(dist(pcadat), method = 'median')
+res = cutree(hc, k=4)
+plot(1:3140,res, col=res, xlab = 'County', ylab = 'Cluster', main = 'Method = Median')
+text(c(300, 1000, 500), 2:4, c('New York', 'Cook Maricopa Harris ', 'Los Angeles'))
+hc = hclust(dist(pcadat), method = 'ward')
+res = cutree(hc, k=4)
+plot(1:3140,res, col=res, xlab = 'County', ylab = 'Cluster', main = 'Method = Ward')
+```
+
+```{r, echo=FALSE}
+plot(pcadat[,1:2], col=res, main = 'Method = Ward')
+```
+
+### K-means
+
+```{r}
+setwd("C:/Users/Ron/Desktop/UIUC/STAT 542/Final project")
+path = getwd()
+
+# load data
+data = data.table::fread(file.path(path, "county_data_apr22_r_j.csv"))
+# missing = as.matrix(sapply(data_model, function(x) sum(is.na(x))))
+```
+
+```{r}
+# perform the k-means to demographics and health related information
+set.seed(123)
+data_dh = scale(data[,c(12:39,49:51)])
+pca_dh = prcomp(data_dh)
+pcadat_dh = pca_dh$x[,1:5]
+
+# choose the optimal number of clusters by the elbow method
+library(factoextra)
+png("plot_elbow.png")
+fviz_nbclust(pcadat_dh, FUNcluster = kmeans, method = "wss", k.max = 10)
+```
+
+```{r}
+# optimal number of cluster is chosen as 4
+result_dh = kmeans(pcadat_dh, centers = 4, iter.max = 100, nstart = 10)
+pcadat_dh = as.data.frame(cbind(pcadat_dh, result_dh$cluster))
+pcadat_dh$V6 = as.factor(pcadat_dh$V6)
+names(pcadat_dh)[names(pcadat_dh) == "V6"] = "Cluster"
+names(pcadat_dh)[names(pcadat_dh) == "PC1"] = "Population_PC"
+names(pcadat_dh)[names(pcadat_dh) == "PC2"] = "Health_PC"
+
+library(ggplot2)
+png("plot_dh.png")
+plotdat_dh = as.data.frame(cbind(pcadat_dh, data$CountyName))
+names(plotdat_dh)[names(plotdat_dh) == "data$CountyName"] = "County"
+ggplot(plotdat_dh, aes(Population_PC, Health_PC, color = Cluster))+
+  geom_point()+labs(y = "General health condition PC", x = "Population PC")+
+  geom_text(aes(label = ifelse(Population_PC < -50,as.character(County),'')),hjust = 0,vjust = 0)
+```
+
+```{r}
+# decide the number of time range
+time = data[,238]
+time_temp = apply(time, 1, function(row) all(row !=0 ))
+time = time[time_temp,]
+res_time = boxplot(time)
+```
+
+```{r}
+library(factoextra)
+# perform the k-means on the death count
+data_death = data[,c(223:275)]
+# optimal_death = fviz_nbclust(data_death, FUNcluster = kmeans, method = "wss", k.max = 10)
+
+# optimal number of cluster is chosen as 3
+result_death = kmeans(data_death, centers = 3, iter.max = 100, nstart = 10)
+
+# visualize the result
+data_death = scale(data_death)
+pca_death = prcomp(data_death)
+pcadat_death = pca_death$x[,1:5]
+pcadat_death = as.data.frame(cbind(pcadat_death, result_death$cluster))
+pcadat_death$V6 = as.factor(pcadat_death$V6)
+names(pcadat_death)[names(pcadat_death) == "V6"] = "Cluster"
+
+png("plot_death.png")
+
+plotdat_death = as.data.frame(cbind(pcadat_death, data$CountyName))
+names(plotdat_death)[names(plotdat_death) == "data$CountyName"] = "County"
+ggplot(plotdat_death, aes(PC1, PC2, color = Cluster))+geom_point()+
+  geom_text(aes(label = ifelse(PC1 < -50,as.character(County),'')),hjust = 0,vjust = 0)
+```
+
+```{r}
+# plot figure_death2
+data_death2 = data.table::fread(file.path(path, "plot_death.csv"))
+day_death = c(1:32)
+
+png("plot_death2.png")
+
+plot(day_death, data_death2[1,2:33], type = "l", col = "red", xlab = "Day", ylab = "Death count")
+lines(day_death, data_death2[2,2:33], col = "blue", type = "l")
+lines(day_death, data_death2[3,2:33], col = "green", type = "l")
+lines(day_death, data_death2[4,2:33], col = "grey", type = "l")
+lines(day_death, data_death2[5,2:33], col = "yellow", type = "l")
+lines(day_death, data_death2[6,2:33], col = "orange", type = "l")
+legend("topleft", legend = c("Kings", "Queens", "New York", "Cook", "Orleans", "Maricopa"), 
+       col = c("red", "blue", "green", "grey", "yellow", "orange"), lty = 1)
+```
+
+```{r}
+# perform the k-means on the confirmed count
+data_conf = data[,c(276:333)]
+# optimal_conf = fviz_nbclust(data_conf, FUNcluster = kmeans, method = "wss", k.max = 10)
+
+# optimal number of cluster is chosen as 3
+result_conf = kmeans(data_conf, centers = 3, iter.max = 100, nstart = 10)
+
+# visualize the result
+data_conf = scale(data_conf)
+pca_conf = prcomp(data_conf)
+pcadat_conf = pca_conf$x[,1:5]
+pcadat_conf = as.data.frame(cbind(pcadat_conf, result_conf$cluster))
+pcadat_conf$V6 = as.factor(pcadat_conf$V6)
+names(pcadat_conf)[names(pcadat_conf) == "V6"] = "Cluster"
+
+png("plot_conf.png")
+
+plotdat_conf = as.data.frame(cbind(pcadat_conf, data$CountyName))
+names(plotdat_conf)[names(plotdat_conf) == "data$CountyName"] = "County"
+ggplot(plotdat_conf, aes(PC1, PC2, color = Cluster))+geom_point()+
+  geom_text(aes(label = ifelse(PC2 > 50,as.character(County),'')),hjust = 0,vjust = 0)+
+  geom_text(aes(label = ifelse(PC1 > 60,as.character(County),'')),hjust = 0,vjust = 0)
+```
+
+## Classification
+
+### Random Forest
+
+We here use random forest to model this categorical response. To tune important parameters of the model, mtry and nodesize, we use grid search and r package *ranger*, which is 6 times more efficient than *randomForest* package. Since for random forest, we can use out of bag data to tune parameters, so we don't need cross-validation, or divide data for validation.
+
+```{r, echo=FALSE}
+library(rsample)
+library(randomForest)
+library(ranger)
+library(fastDummies)
+set.seed(123)
+dat.dh = dat[1:3140, c(12:45, 48:51)]
+y = as.factor(abs(dat$tot_deaths/dat$PopulationEstimate2018*100000>1)[1:3140])
+dat.dh[,c(2:3,6:7, 13:17,19:29, 36:38)]=dat.dh[,c(2:3,6:7, 13:17,19:29, 36:38)]/dat$PopulationEstimate2018[1:3140]
+dat.dh = as.data.frame(scale(dat.dh))
+dat.dh$y = y
+```
+
+```{r}
+hypergrid = expand.grid(mtry=1:10, node_size=seq(2,20,2))
+for(i in 1:nrow(hypergrid)){
+  model = ranger(y~., data = dat.dh, mtry = hypergrid$mtry[i],
+                 min.node.size = hypergrid$node_size[i])
+  hypergrid$Pre_err[i] = model$prediction.error
+}
+opt_md = randomForest( y~., data = dat.dh, mtry = hypergrid$mtry[which.min(hypergrid$Pre_err)], 
+                       nodesize=hypergrid$node_size[which.min(hypergrid$Pre_err)], importance=TRUE)
+plot(opt_md)
+varImpPlot(opt_md, type = 1, n.var = 15)
+```
+
+### Support Vector Machine
+
+```{r}
+# transform population amount into rate
+data_svm = as.data.frame(data[,c(12:45,48:51,334)])
+index = c(2,3,6,7,13:17,19:28,36:38)
+for (i in index){
+  data_svm[,i] = data_svm[,i]/data_svm[,1]
+}
+data_svm[,-39] = scale(data_svm[,-39])
+data_svm[,39] = factor(data_svm[,39])
+
+# divide the data into training and testing data sets
+library(caTools)
+set.seed(123)
+sample_svm = sample.split(data_svm, SplitRatio = 0.7)
+train_svm = subset(data_svm, sample_svm == TRUE)
+test_svm = subset(data_svm, sample_svm == FALSE)
+
+# apply 10-folds cross validation
+library(caret)
+kernel_svm = c("linear", "polynomial", "radial", "sigmoid")
+error_temp = 1
+
+for (i in kernel_svm){
+  cv_svm = tune(svm, Death ~ ., data = train_svm , kernel = i, 
+                ranges = list(cost = 10^(-2:2), gamma = c(.5,1,2)))
+  if (cv_svm$best.performance < error_temp){
+    error_temp = cv_svm$best.performance
+    svm_kernel = i
+    svm_cost = cv_svm$best.parameters[1,1]
+    svm_gamma = cv_svm$best.parameters[1,2]
+  }
+}
+```
+
+```{r}
+# perform SVM on the testing data
+library(e1071)
+result_svm = svm(test_svm[,-39], y = test_svm[,39], kernel = "linear", gamma = svm_gamma, cost = svm_cost)
+```
+
+```{r}
+# construct the confusion matrix
+table(test_svm[,39], result_svm$fitted, dnn = c("Reference", "Prediction"))
+```
+
+### Logistic regression
+
+```{r}
+library(glmnet)
+
+# cross validation
+cv.lasso = cv.glmnet(as.matrix(train_svm[,-39]), as.matrix(train_svm[,39]), alpha = 1, family = "binomial")
+cat("The best tuning parameter is", cv.lasso$lambda.min, "\n")
+
+# fit the final model on the training data
+model = glmnet(as.matrix(train_svm[,-39]), as.matrix(train_svm[,39]), alpha = 1, family = "binomial",
+               lambda = cv.lasso$lambda.min)
+
+# make predictions on the test data
+probability = as.matrix(test_svm[,-39]) %*% model$beta+model$a0 
+prediction = ifelse(probability < 0.5, 0, 1)
+
+# summarize the fitted result
+# construct the confusion matrix
+conf_matrix = table(test_svm[,39], prediction, dnn = c("Reference", "Prediction"))
+conf_matrix
+
+#calculate mis-classification rates
+error_rate = 1-sum(diag(conf_matrix))/sum(conf_matrix)
+cat("The misclassification rate for the testing set is", error_rate, "\n")
+```
+
+## Regression
+
+### Linear regression with Lasso penalty
+
+```{r}
+library(glmnet)
+y = dat$tot_deaths
+y = apply(cbind(0,dat$X.Deaths_04.22.2020-dat$X.Deaths_04.15.2020),1,max)
+res = NULL
+set.seed(12)
+for(i in 0:6){
+   for(j in 0:6){
+     dat.reg = dat[,c(12:45, 48:51,(136-i):136,(213-j):213)]
+     dat.reg = scale(dat.reg)
+     md = cv.glmnet(as.matrix(dat.reg),y,type.measure = 'mse', alpha=1)
+     res = rbind(res,c(i,j,min(md$cvm)))
+    }
+  }
+
+```
+
+````{r}
+dat.reg = dat[,c(12,15:45, 48:51,(136-4):136,(213-1):213)]
+dat.reg = scale(dat.reg)
+md = cv.glmnet(as.matrix(dat.reg),y,type.measure = 'mse', alpha=1)
+beta = coef.cv.glmnet(md, s='lambda.min')
+plot(1:5, c(-7.71,0,-3.21,0.54,0), xaxt = "n", main='Estimation of parameters', xlab='', ylab='', type='l',ylim = c(-8,13), col = 2,lty = 1, lwd =2)
+axis(1, 1:5,c('Baby','Child','Youth','Adult','Senior'))
+lines(1:5, c(0,4.17,11.87,12.38,7.68), col=3, lty=2, lwd =2)
+legend('topleft',legend = c('Male', 'Female'), col=2:3, lty=1:2, lwd =2)
+```
+
+### Random forest
+
+```{r}
+dat.reg = dat[1:3000,c(12:45, 48:51,136,213)]
+dat.reg = as.data.frame(dat.reg)
+dat.reg$y = apply(cbind(0,dat$X.Deaths_04.22.2020-dat$X.Deaths_04.15.2020),1,max)[1:3000]
+hypergrid = expand.grid(mtry=1:20, node_size=1:5)
+set.seed(1234)
+for(i in 1:nrow(hypergrid)){
+  model = ranger(y~., data = dat.reg, mtry = hypergrid$mtry[i],
+                 min.node.size = hypergrid$node_size[i])
+  hypergrid$Pre_err[i] = model$prediction.error
+}
+opt_md = randomForest( y~., data = dat.reg, mtry = hypergrid$mtry[which.min(hypergrid$Pre_err)], 
+                       nodesize=hypergrid$node_size[which.min(hypergrid$Pre_err)], importance=TRUE)
+varImpPlot(opt_md, type = 1, n.var = 15)
+```
+
+### Boosting
+
+```{r}
+library(gbm)
+library(tidyverse)
+library(caret)
+library(xgboost)
+# perform boosting algorithm (new confirmed and death cases for a week ahead)
+train_lasso = data.frame(data[,c(12:45,48:51,136,213,345)])
+names(train_lasso)[names(train_lasso) == "X.Deaths_04.15.2020"] = "Days1.Death"
+names(train_lasso)[names(train_lasso) == "X.Cases_04.15.2020"] = "Days1.Confirm"
+
+set.seed(123)
+fit_boosting = train(X.Death.week~., data = train_lasso, method = "xgbTree", trControl = trainControl("cv", number = 10))
+```
+
+```{r}
+# make predictions
+test_lasso = data.frame(data[,c(12:45,48:51,143,220)])
+names(test_lasso)[names(test_lasso) == "X.Deaths_04.22.2020"] = "Days1.Death"
+names(test_lasso)[names(test_lasso) == "X.Cases_04.22.2020"] = "Days1.Confirm"
+predictions_boosting = fit_boosting %>% predict(test_lasso)
+```
+
+```{r}
+# analyze the relative influence
+boost.boston=gbm(X.Death.week~., data=train_lasso, distribution="gaussian",n.trees=150,interaction.depth=3)
+png("plot_boosting.png")
+summary(boost.boston, cBars = 1011)
+```
+
+### Bonus
+
+```{r}
+# visualize the prediction and actual death cases on April 29 among all the counties.
+newdat = read.csv('usafacts_infections.csv', header = T)
+newdat =as.data.frame( cbind(newdat$countyFIPS, newdat$X.Deaths_04.29.2020))
+colnames(newdat) = c('countyFIPS', 'death')
+newx = dat.reg
+dat.reg = dat[,c(12,15:45, 48:51,(136-4):136,(213-1):213)]
+y = apply(cbind(0,dat$X.Deaths_04.22.2020-dat$X.Deaths_04.15.2020),1,max)
+md = cv.glmnet(as.matrix(dat.reg),y,type.measure = 'mse', alpha=1)
+newx[,c(37:43)] = dat[,c(139:143,219:220)]
+newx = as.matrix(newx)
+lassopred = predict.cv.glmnet(md,newx,s='lambda.min')
+lassopred = as.data.frame(cbind(dat$countyFIPS, lassopred+dat$X.Deaths_04.22.2020))
+colnames(lassopred) = c('countyFIPS', 'preddeath')
+ress = base::merge(newdat, lassopred, by='countyFIPS', all=F)
+plot(ress[,2:3], xlab ='Observed deaths on April 29', ylab='Predicted deaths on April 29')
+abline(0,1)
+```
+
+## Collaborate question
+
+```{r}
+# visualize the population density among all the counties
+plot(dat.dh$PopulationDensityperSqMile2010,as.vector(y), xlab='population density', ylab='classification')
+```
